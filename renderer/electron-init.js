@@ -301,7 +301,8 @@ class ElectronApp {
       try {
         const theme = await window.electronAPI.getStoreValue('theme');
         if (theme) {
-          document.body.className = `${theme}-theme`;
+          // El tema se maneja en animations.js para evitar duplicación
+          console.log('Tema cargado desde configuración:', theme);
         }
       } catch (error) {
         console.error('Error al cargar configuración:', error);
@@ -310,23 +311,8 @@ class ElectronApp {
   }
 
   setupTheme() {
-    const settingsBtn = document.getElementById('settings-btn');
-    if (settingsBtn) {
-      settingsBtn.addEventListener('click', () => {
-        this.toggleTheme();
-      });
-    }
-  }
-
-  async toggleTheme() {
-    const currentTheme = document.body.classList.contains('dark-theme') ? 'dark' : 'light';
-    const newTheme = currentTheme === 'light' ? 'dark' : 'light';
-    
-    document.body.className = `${newTheme}-theme`;
-    
-    if (window.electronAPI) {
-      await window.electronAPI.setStoreValue('theme', newTheme);
-    }
+    // El manejo del tema se hace en animations.js para evitar conflictos
+    console.log('Manejo del tema delegado a animations.js');
   }
 
   setupUIEvents() {

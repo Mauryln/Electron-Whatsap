@@ -8,8 +8,47 @@
   <link rel="stylesheet" href="style.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
   <link rel="stylesheet" href="trix.css">
+  <script>
+    // Aplicar tema inmediatamente para evitar pantallazos
+    (function() {
+      try {
+        // Intentar obtener el tema del localStorage primero (más rápido)
+        const savedTheme = localStorage.getItem("wa_theme");
+        if (savedTheme === "dark") {
+          document.body.className = "dark-theme";
+        } else {
+          document.body.className = "light-theme";
+        }
+        
+        // Si estamos en Electron, verificar también el almacenamiento de Electron
+        if (window.electronAPI) {
+          // Esto se ejecutará después de que las APIs de Electron estén disponibles
+          setTimeout(async () => {
+            try {
+              const electronTheme = await window.electronAPI.getStoreValue('theme');
+              if (electronTheme && electronTheme !== savedTheme) {
+                // Si hay una diferencia, usar el tema de Electron y sincronizar
+                if (electronTheme === "dark") {
+                  document.body.className = "dark-theme";
+                  localStorage.setItem("wa_theme", "dark");
+                } else {
+                  document.body.className = "light-theme";
+                  localStorage.setItem("wa_theme", "light");
+                }
+              }
+            } catch (error) {
+              console.error('Error al verificar tema de Electron:', error);
+            }
+          }, 100);
+        }
+      } catch (error) {
+        // Fallback al tema claro
+        document.body.className = "light-theme";
+      }
+    })();
+  </script>
 </head>
-<body class="light-theme">
+<body>
   <!-- Sección de login mejorada -->
   <div class="session-controls">
     <div class="session-status" id="session-status-indicator">

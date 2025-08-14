@@ -715,28 +715,74 @@ document.addEventListener("DOMContentLoaded", () => {
   const body = document.body
   let isDarkMode = false
 
-  // Leer el tema guardado en localStorage
-  const savedTheme = localStorage.getItem("wa_theme")
-  if (savedTheme === "dark") {
-    isDarkMode = true
-    body.classList.remove("light-theme")
-    body.classList.add("dark-theme")
-    if (settingsBtn) {
-      settingsBtn.innerHTML = '<i class="fas fa-sun"></i>'
-      settingsBtn.title = "Cambiar a tema claro"
-    }
-  } else {
-    isDarkMode = false
-    body.classList.remove("dark-theme")
-    body.classList.add("light-theme")
-    if (settingsBtn) {
-      settingsBtn.innerHTML = '<i class="fas fa-moon"></i>'
-      settingsBtn.title = "Cambiar a tema oscuro"
+  // Función para cargar el tema desde el almacenamiento de Electron
+  async function loadTheme() {
+    try {
+      if (window.electronAPI) {
+        const savedTheme = await window.electronAPI.getStoreValue('theme')
+        if (savedTheme === "dark") {
+          isDarkMode = true
+          body.classList.remove("light-theme")
+          body.classList.add("dark-theme")
+          if (settingsBtn) {
+            settingsBtn.innerHTML = '<i class="fas fa-sun"></i>'
+            settingsBtn.title = "Cambiar a tema claro"
+          }
+          // Sincronizar con localStorage
+          localStorage.setItem("wa_theme", "dark")
+        } else {
+          isDarkMode = false
+          body.classList.remove("dark-theme")
+          body.classList.add("light-theme")
+          if (settingsBtn) {
+            settingsBtn.innerHTML = '<i class="fas fa-moon"></i>'
+            settingsBtn.title = "Cambiar a tema oscuro"
+          }
+          // Sincronizar con localStorage
+          localStorage.setItem("wa_theme", "light")
+        }
+      } else {
+        // Fallback para cuando no hay APIs de Electron disponibles
+        const savedTheme = localStorage.getItem("wa_theme")
+        if (savedTheme === "dark") {
+          isDarkMode = true
+          body.classList.remove("light-theme")
+          body.classList.add("dark-theme")
+          if (settingsBtn) {
+            settingsBtn.innerHTML = '<i class="fas fa-sun"></i>'
+            settingsBtn.title = "Cambiar a tema claro"
+          }
+        } else {
+          isDarkMode = false
+          body.classList.remove("dark-theme")
+          body.classList.add("light-theme")
+          if (settingsBtn) {
+            settingsBtn.innerHTML = '<i class="fas fa-moon"></i>'
+            settingsBtn.title = "Cambiar a tema oscuro"
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error al cargar el tema:', error)
+      // Fallback al tema claro por defecto
+      isDarkMode = false
+      body.classList.remove("dark-theme")
+      body.classList.add("light-theme")
+      if (settingsBtn) {
+        settingsBtn.innerHTML = '<i class="fas fa-moon"></i>'
+        settingsBtn.title = "Cambiar a tema oscuro"
+      }
     }
   }
 
+  // Cargar el tema al inicializar
+  // Esperar un poco para que las APIs de Electron estén disponibles
+  setTimeout(() => {
+    loadTheme()
+  }, 200)
+
   if (settingsBtn) {
-    settingsBtn.addEventListener("click", () => {
+    settingsBtn.addEventListener("click", async () => {
       isDarkMode = !isDarkMode
 
       if (isDarkMode) {
@@ -744,12 +790,22 @@ document.addEventListener("DOMContentLoaded", () => {
         body.classList.add("dark-theme")
         settingsBtn.innerHTML = '<i class="fas fa-sun"></i>'
         settingsBtn.title = "Cambiar a tema claro"
+        
+        // Guardar en ambos lugares para compatibilidad
+        if (window.electronAPI) {
+          await window.electronAPI.setStoreValue('theme', 'dark')
+        }
         localStorage.setItem("wa_theme", "dark")
       } else {
         body.classList.remove("dark-theme")
         body.classList.add("light-theme")
         settingsBtn.innerHTML = '<i class="fas fa-moon"></i>'
         settingsBtn.title = "Cambiar a tema oscuro"
+        
+        // Guardar en ambos lugares para compatibilidad
+        if (window.electronAPI) {
+          await window.electronAPI.setStoreValue('theme', 'light')
+        }
         localStorage.setItem("wa_theme", "light")
       }
     })
