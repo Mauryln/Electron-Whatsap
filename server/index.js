@@ -1,0 +1,716 @@
+// Optimizaciones de memoria para 2GB RAM
+if (process.env.NODE_ENV === 'production') {
+    // Configurar límites de memoria para 2GB
+    const v8 = require('v8');
+    v8.setFlagsFromString('--max-old-space-size=1024');
+}
+
+const express = require('express');
+const { MessageMedia } = require('whatsapp-web.js');
+const multer = require('multer');
+const fs = require('fs');
+const path = require('path');
+const cors = require('cors');
+const compression = require('compression');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const cron = require('node-cron');
+
+// Importar módulos locales
+// Cargar configuración unificada
+const config = require('./config');
+console.log(`Usando configuración para el entorno: ${config.nodeEnv}`);
+const logger = require('./utils/logger');
+const sessionManager = require('./utils/sessionManager');
+
+const app = express();
+const port = config.port;
+const ipAddress = config.ipAddress;
+
+// --- Middleware de Seguridad y Optimización ---
+app.use(helmet({
+    contentSecurityPolicy: false, // Deshabilitar para WhatsApp Web
+    crossOriginEmbedderPolicy: false
+}));
+app.use(compression());
+app.use(cors({
+    origin: true,
+    credentials: true
+}));
+
+// Rate limiting
+// const limiter = rateLimit({
+//     windowMs: config.rateLimit.windowMs,
+//     max: config.rateLimit.maxRequests,
+//     message: {
+//         success: false,
+//         error: 'Too many requests, please try again later.'
+//     },
+//     standardHeaders: true,
+//     legacyHeaders: false,
+// });
+// app.use(limiter);
+
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Configuración de multer optimizada
+const uploadPath = path.join(__dirname, 'uploads');
+// Crear el directorio si no existe
+if (!fs.existsSync(uploadPath)) {
+    fs.mkdirSync(uploadPath, { recursive: true });
+    logger.info('Upload directory created', { path: uploadPath });
+} else {
+    logger.info('Upload directory exists', { path: uploadPath });
+}
+
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, uploadPath);
+    },
+    filename: (req, file, cb) => {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+    }
+});
+
+const fileFilter = (req, file, cb) => {
+    if (config.uploads.allowedMimeTypes.includes(file.mimetype)) {
+        cb(null, true);
+    } else {
+        cb(new Error('Tipo de archivo no permitido'), false);
+    }
+};
+
+const upload = multer({
+    storage: storage,
+    fileFilter: fileFilter,
+    limits: {
+        fileSize: config.uploads.maxFileSize
+    }
+});
+
+// Función helper para limpiar archivos de media
+function cleanupMediaFile(mediaFile, context = '') {
+    if (mediaFile) {
+        try {
+            if (fs.existsSync(mediaFile.path)) {
+                fs.unlinkSync(mediaFile.path);
+                logger.info('Media file cleaned up', { context, filename: mediaFile.originalname });
+            }
+        } catch (cleanupError) {
+            logger.error('Error deleting media file', { context, error: cleanupError.message, path: mediaFile.path });
+        }
+    }
+}
+
+// --- Middleware de Logging ---
+app.use((req, res, next) => {
+    const start = Date.now();
+    res.on('finish', () => {
+        // Evitar logs innecesarios en endpoints muy consultados
+        const skipLogging = (
+            req.url.startsWith('/health') ||
+            req.url.startsWith('/session-status') ||
+            req.url.startsWith('/labels') ||
+            req.url.startsWith('/get-qr')
+        );
+        if (skipLogging) return;
+        const duration = Date.now() - start;
+        logger.info('HTTP Request', {
+            method: req.method,
+            url: req.url,
+            statusCode: res.statusCode,
+            duration: `${duration}ms`,
+            userAgent: req.get('User-Agent'),
+            ip: req.ip
+        });
+    });
+    next();
+});
+
+// --- Endpoints Básicos ---
+
+app.get('/health', (req, res) => {
+    const stats = sessionManager.getStats();
+    const memoryUsage = process.memoryUsage();
+    
+    res.json({
+        success: true,
+        status: 'healthy',
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        memory: {
+            used: Math.round(memoryUsage.heapUsed / 1024 / 1024) + 'MB',
+            total: Math.round(memoryUsage.heapTotal / 1024 / 1024) + 'MB',
+            external: Math.round(memoryUsage.external / 1024 / 1024) + 'MB'
+        },
+        sessions: {
+            active: stats.activeSessions,
+            total: stats.totalSessions,
+            max: config.sessions.maxSessions
+        }
+    });
+});
+
+// --- Endpoints de Gestión de Sesión ---
+
+app.post('/start-session', express.json(), async (req, res) => {
+    const userId = req.body.userId;
+    if (!userId) {
+        return res.status(400).json({ success: false, error: 'Missing userId' });
+    }
+
+    logger.info('Starting session request', { userId });
+
+    try {
+        const result = await sessionManager.createSession(userId);
+        res.json(result);
+    } catch (error) {
+        logger.error('Error starting session', { userId, error: error.message });
+        res.status(500).json({ 
+            success: false, 
+            error: 'Internal server error', 
+            status: 'init_error' 
+        });
+    }
+});
+
+app.get('/session-status/:userId', (req, res) => {
+    const userId = req.params.userId;
+    if (!userId) {
+        return res.status(400).json({ success: false, error: 'Missing userId' });
+    }
+
+    try {
+        const status = sessionManager.getSessionStatus(userId);
+        const stats = sessionManager.getStats();
+        
+        res.json({ 
+            success: true, 
+            status: status || 'no_session',
+            stats: {
+                activeSessions: stats.activeSessions,
+                totalSessions: stats.totalSessions,
+                maxSessions: config.sessions.maxSessions
+            }
+        });
+    } catch (error) {
+        logger.error('Error checking session status', { userId, error: error.message });
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+});
+
+app.get('/get-qr/:userId', (req, res) => {
+    const userId = req.params.userId;
+    if (!userId) {
+        return res.status(400).json({ success: false, error: 'Missing userId' });
+    }
+
+    const qr = sessionManager.getQRCode(userId);
+    const status = sessionManager.getSessionStatus(userId);
+
+    if (status === 'ready') {
+        return res.json({ success: true, qrCode: null, status: 'ready', message: 'Client already ready' });
+    } else if (qr && status === 'needs_scan') {
+        return res.json({ success: true, qrCode: qr, status: 'needs_scan' });
+    } else if (status === 'initializing' || status === 'authenticated') {
+        return res.status(202).json({ 
+            success: false, 
+            status: status, 
+            error: 'QR code not generated yet or session is authenticating/ready.' 
+        });
+    } else {
+        return res.status(404).json({ 
+            success: false, 
+            status: status || 'no_session', 
+            error: 'No session found, QR not generated, session error, or disconnected.' 
+        });
+    }
+});
+
+app.post('/close-session', express.json(), async (req, res) => {
+    const userId = req.body.userId;
+    if (!userId) {
+        return res.status(400).json({ success: false, error: 'Missing userId' });
+    }
+
+    logger.info('Closing session request', { userId });
+
+    try {
+        await sessionManager.destroySession(userId);
+        res.json({ success: true, message: 'Session closed successfully.', status: 'no_session' });
+    } catch (error) {
+        logger.error('Error closing session', { userId, error: error.message });
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+});
+
+// --- Endpoints de WhatsApp ---
+
+app.get('/labels/:userId', async (req, res) => {
+    const userId = req.params.userId;
+    const client = sessionManager.getSession(userId);
+
+    if (!client || sessionManager.getSessionStatus(userId) !== 'ready') {
+        return res.status(400).json({ success: false, error: 'WhatsApp session not ready.' });
+    }
+
+    try {
+        sessionManager.updateActivity(userId);
+        
+        if (typeof client.getLabels !== 'function') {
+            logger.info('Labels not supported for this account (getLabels missing)', { userId });
+            return res.status(200).json({ 
+                success: true, 
+                labels: [],
+                message: 'No labels found or not supported for this account.'
+            });
+        }
+        
+        const labels = await client.getLabels();
+        
+        if (!labels || labels.length === 0) {
+            logger.info('No labels found for account', { userId });
+            return res.status(200).json({ 
+                success: true, 
+                labels: [],
+                message: 'No labels found for this account.'
+            });
+        }
+        
+        logger.info('Labels fetched successfully', { userId, count: labels.length });
+        res.json({ success: true, labels: labels });
+    } catch (error) {
+        logger.error('Error fetching labels', { userId, error: error.message });
+        return res.status(200).json({
+            success: true,
+            labels: [],
+            message: 'No labels found or error fetching labels.'
+        });
+    }
+});
+
+app.get('/labels/:userId/:labelId/chats', async (req, res) => {
+    const { userId, labelId } = req.params;
+    const client = sessionManager.getSession(userId);
+
+    if (!client || sessionManager.getSessionStatus(userId) !== 'ready') {
+        return res.status(400).json({ success: false, error: 'WhatsApp session not ready.' });
+    }
+
+    try {
+        sessionManager.updateActivity(userId);
+        
+        if (typeof client.getChatsByLabelId !== 'function') {
+            logger.info('Chats by label not supported for this account', { userId });
+            return res.status(501).json({ 
+                success: false, 
+                error: 'Fetching chats by label is likely not supported for this account.',
+                message: 'This feature requires a WhatsApp Business account.'
+            });
+        }
+        
+        const chats = await client.getChatsByLabelId(labelId);
+        const numbers = chats.map(chat => chat.id.user);
+
+        logger.info('Chats fetched for label', { userId, labelId, count: numbers.length });
+        res.json({ success: true, numbers: numbers });
+    } catch (error) {
+        logger.error('Error fetching chats for label', { userId, labelId, error: error.message });
+        if (error.message.includes("Evaluation failed") || error.message.includes("getChatsByLabelId is not a function")) {
+            res.status(501).json({ 
+                success: false, 
+                error: 'Fetching chats by label might require WhatsApp Business or is not supported by this version.',
+                message: 'This feature requires a WhatsApp Business account.'
+            });
+        } else {
+            res.status(500).json({ success: false, error: 'Failed to fetch chats for the label: ' + error.message });
+        }
+    }
+});
+
+app.get('/groups/:userId', async (req, res) => {
+    const userId = req.params.userId;
+    const client = sessionManager.getSession(userId);
+
+    if (!client || sessionManager.getSessionStatus(userId) !== 'ready') {
+        return res.status(400).json({ success: false, error: 'WhatsApp session not ready.' });
+    }
+
+    try {
+        sessionManager.updateActivity(userId);
+        
+        const chats = await client.getChats();
+        const groups = chats
+            .filter(chat => chat.isGroup)
+            .map(chat => ({
+                id: chat.id._serialized,
+                name: chat.name || 'Grupo sin nombre',
+            }));
+        
+        logger.info('Groups fetched', { userId, count: groups.length });
+        res.json({ success: true, groups: groups });
+    } catch (error) {
+        logger.error('Error fetching groups', { userId, error: error.message });
+        res.status(500).json({ success: false, error: 'Failed to fetch groups: ' + error.message });
+    }
+});
+
+app.get('/groups/:userId/:groupId/participants', async (req, res) => {
+    const { userId, groupId } = req.params;
+    const client = sessionManager.getSession(userId);
+
+    if (!client || sessionManager.getSessionStatus(userId) !== 'ready') {
+        return res.status(400).json({ success: false, error: 'WhatsApp session not ready.' });
+    }
+
+    try {
+        sessionManager.updateActivity(userId);
+        
+        const groupChat = await client.getChatById(groupId);
+
+        if (!groupChat || !groupChat.isGroup) {
+            return res.status(404).json({ success: false, error: 'Group not found.' });
+        }
+        
+        let participants = [];
+        if (groupChat.participants && Array.isArray(groupChat.participants)) {
+            participants = groupChat.participants;
+        } else if (typeof groupChat.fetchParticipants === 'function') {
+            try {
+                participants = await groupChat.fetchParticipants();
+            } catch(fetchErr) {
+                logger.error('Error fetching participants explicitly', { groupId, error: fetchErr.message });
+            }
+        }
+
+        const numbers = participants.map(p => p.id.user);
+
+        logger.info('Participants fetched for group', { userId, groupId, count: numbers.length });
+        res.json({ success: true, numbers: numbers });
+    } catch (error) {
+        logger.error('Error fetching participants for group', { userId, groupId, error: error.message });
+        res.status(500).json({ success: false, error: 'Failed to fetch participants: ' + error.message });
+    }
+});
+
+// Nuevo endpoint: obtener todas las etiquetas y sus números
+app.get('/labels/:userId/all-chats', async (req, res) => {
+    const userId = req.params.userId;
+    const client = sessionManager.getSession(userId);
+
+    if (!client || sessionManager.getSessionStatus(userId) !== 'ready') {
+        return res.status(400).json({ success: false, error: 'WhatsApp session not ready.' });
+    }
+
+    try {
+        sessionManager.updateActivity(userId);
+
+        if (typeof client.getLabels !== 'function' || typeof client.getChatsByLabelId !== 'function') {
+            logger.warn('Label functions not found for this client, returning empty list.', { userId });
+            return res.json({ success: true, labels: [], message: 'No se encontraron etiquetas para esta cuenta.' });
+        }
+
+        const labels = await client.getLabels();
+        if (!labels || labels.length === 0) {
+            return res.json({ success: true, labels: [] });
+        }
+
+        // Para cada etiqueta, obtener los números
+        const result = [];
+        for (const label of labels) {
+            try {
+                const chats = await client.getChatsByLabelId(label.id);
+                const numbers = chats.map(chat => chat.id.user);
+                result.push({ id: label.id, name: label.name, numbers });
+            } catch (err) {
+                result.push({ id: label.id, name: label.name, numbers: [], error: err.message });
+            }
+        }
+
+        res.json({ success: true, labels: result });
+    } catch (error) {
+        logger.error('Error fetching all chats by label', { userId, error: error.message });
+        res.status(500).json({ success: false, error: 'Failed to fetch all chats by label: ' + error.message });
+    }
+});
+
+// --- Endpoint de Envío de Mensajes Optimizado ---
+
+app.post('/send-messages', upload.single('media'), async (req, res) => {
+    const { userId, message, delay, numbers: numbersJson, mensajesPorNumero: mensajesJson } = req.body;
+    const mediaFile = req.file;
+
+    logger.info('Starting message send process', { 
+        userId, 
+        hasMedia: !!mediaFile, 
+        mediaPath: mediaFile?.path,
+        mediaSize: mediaFile?.size,
+        messageLength: message?.length || 0
+    });
+
+    if (!userId) {
+        cleanupMediaFile(mediaFile, 'userId validation');
+        return res.status(400).json({ success: false, error: 'Missing userId' });
+    }
+
+    const client = sessionManager.getSession(userId);
+    if (!client || sessionManager.getSessionStatus(userId) !== 'ready') {
+        cleanupMediaFile(mediaFile, 'session validation');
+        return res.status(400).json({ 
+            success: false, 
+            error: 'WhatsApp session not ready.', 
+            status: sessionManager.getSessionStatus(userId) 
+        });
+    }
+
+    // Verificar si la sesión está bloqueada
+    if (!(await sessionManager.acquireLock(userId))) {
+        cleanupMediaFile(mediaFile, 'lock validation');
+        return res.status(429).json({ 
+            success: false, 
+            error: 'Session is busy, please try again later.' 
+        });
+    }
+
+    let numbersRaw;
+    let mensajesPorNumero;
+    try {
+        numbersRaw = JSON.parse(numbersJson || '[]');
+        mensajesPorNumero = JSON.parse(mensajesJson || '[]');
+        if (!Array.isArray(numbersRaw)) throw new Error("Invalid 'numbers' array.");
+        if (!Array.isArray(mensajesPorNumero)) mensajesPorNumero = numbersRaw.map(() => message || "");
+        if (mensajesPorNumero.length !== numbersRaw.length) {
+            mensajesPorNumero = numbersRaw.map((_, index) => mensajesPorNumero[index] || message || "");
+        }
+    } catch (e) {
+        cleanupMediaFile(mediaFile, 'JSON validation');
+        sessionManager.releaseLock(userId);
+        return res.status(400).json({ success: false, error: 'Invalid JSON in numbers or mensajesPorNumero field.' });
+    }
+
+    if (!message && !mediaFile) {
+        cleanupMediaFile(mediaFile, 'message validation');
+        sessionManager.releaseLock(userId);
+        return res.status(400).json({ success: false, error: 'Message or media file is required.' });
+    }
+    
+    if (numbersRaw.length === 0) {
+        cleanupMediaFile(mediaFile, 'numbers validation');
+        sessionManager.releaseLock(userId);
+        return res.status(400).json({ success: false, error: 'No numbers selected to send to.' });
+    }
+
+    const sendDelay = parseInt(delay, 10) || config.messages.defaultDelay;
+    let media = null;
+
+    if (mediaFile) {
+        try {
+            // Verificar que el archivo existe antes de procesarlo
+            if (!fs.existsSync(mediaFile.path)) {
+                logger.error('Media file not found', { userId, path: mediaFile.path });
+                throw new Error(`Archivo no encontrado: ${mediaFile.originalname}`);
+            }
+
+            const fileContent = fs.readFileSync(mediaFile.path);
+            media = new MessageMedia(
+                mediaFile.mimetype,
+                fileContent.toString('base64'),
+                mediaFile.originalname
+            );
+            logger.info('Media file processed', { userId, filename: mediaFile.originalname, size: fileContent.length });
+        } catch (mediaError) {
+            logger.error('Error processing media file', { userId, error: mediaError.message, path: mediaFile.path });
+            // No eliminar el archivo aquí, dejarlo para limpieza posterior
+            media = null;
+        }
+    }
+
+    let enviados = 0;
+    let fallidos = 0;
+    const total = numbersRaw.length;
+    const failedNumbers = [];
+
+    logger.info('Starting to send messages', { userId, total, delay: sendDelay });
+
+    // Procesar envío en foreground (esperar a terminar)
+    try {
+        for (let i = 0; i < numbersRaw.length; i++) {
+            // Actualizar actividad en cada iteración para evitar timeout
+            sessionManager.updateActivity(userId);
+
+            const originalNumber = numbersRaw[i];
+            const currentMessage = mensajesPorNumero[i] || message || "";
+            let numberOnly = originalNumber.replace(/\D/g, '');
+
+            if (!originalNumber.includes('+') && numberOnly.length === 8 && !numberOnly.startsWith('591')) {
+                numberOnly = '591' + numberOnly;
+            } else if (originalNumber.includes('+')) {
+                numberOnly = originalNumber.replace(/\D/g, '');
+            }
+
+            try {
+                const recipientWID = await client.getNumberId(numberOnly);
+
+                if (recipientWID) {
+                    const chatId = recipientWID._serialized;
+                    
+                    if (media) {
+                        await client.sendMessage(chatId, media, { caption: currentMessage || undefined });
+                        logger.info('Media sent successfully', { userId, number: numberOnly });
+                    } else if (currentMessage) {
+                        await client.sendMessage(chatId, currentMessage);
+                    }
+                    
+                    enviados++;
+                } else {
+                    logger.warn('Number not registered', { userId, number: numberOnly });
+                    failedNumbers.push({ number: originalNumber, reason: "Not a valid WhatsApp number" });
+                    fallidos++;
+                }
+            } catch (err) {
+                logger.error('Error sending message', { userId, number: numberOnly, error: err.message });
+                failedNumbers.push({ number: originalNumber, reason: err.message || 'Send failed' });
+                fallidos++;
+            }
+
+            // Delay entre mensajes
+            if (i < numbersRaw.length - 1) {
+                await new Promise(resolve => setTimeout(resolve, sendDelay));
+            }
+        }
+
+        logger.info('Message sending process completed', { 
+            userId, 
+            enviados, 
+            fallidos, 
+            total,
+            failedNumbers: failedNumbers.length > 0 ? failedNumbers : undefined
+        });
+
+        // Limpiar archivo de media
+        cleanupMediaFile(mediaFile, 'success completion');
+        
+        // Liberar lock
+        sessionManager.releaseLock(userId);
+
+        // Responder al frontend SOLO cuando termine
+        return res.json({
+            success: true,
+            message: `Mensajes enviados a ${total} números.`,
+            summary: { enviados, fallidos, total },
+            failedNumbers
+        });
+    } catch (error) {
+        logger.error('Error in message sending process', { userId, error: error.message });
+        cleanupMediaFile(mediaFile, 'error handling');
+        sessionManager.releaseLock(userId);
+        return res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.get('/reports/:userId/:labelId/messages', async (req, res) => {
+    const { userId, labelId } = req.params;
+    const client = sessionManager.getSession(userId);
+
+    if (!client || sessionManager.getSessionStatus(userId) !== 'ready') {
+        return res.status(400).json({ success: false, error: 'WhatsApp session not ready.' });
+    }
+
+    try {
+        sessionManager.updateActivity(userId);
+        
+        let reportMessages = [];
+        if (typeof client.getChatsByLabelId === 'function') {
+            const chats = await client.getChatsByLabelId(labelId);
+            for (const chat of chats) {
+                try {
+                    const messages = await chat.fetchMessages({ limit: 10 });
+                    messages.forEach(msg => {
+                        if (msg.fromMe) {
+                            reportMessages.push({
+                                number: chat.id.user,
+                                body: msg.body || (msg.hasMedia ? '[Media]' : ''),
+                                timestamp: msg.timestamp,
+                                ack: msg.ack,
+                                response: null
+                            });
+                        }
+                    });
+                } catch (chatErr) {
+                    logger.error('Error fetching messages for chat', { 
+                        chatId: chat.id._serialized, 
+                        error: chatErr.message 
+                    });
+                }
+            }
+        } else {
+            logger.warn('getChatsByLabelId not available for reports', { userId });
+        }
+
+        logger.info('Report data generated', { userId, labelId, messageCount: reportMessages.length });
+        res.json({ success: true, messages: reportMessages });
+
+    } catch (error) {
+        logger.error('Error generating report', { userId, labelId, error: error.message });
+        res.status(500).json({ success: false, error: 'Failed to generate report: ' + error.message });
+    }
+});
+
+// --- Error Handling ---
+app.use((error, req, res, next) => {
+    logger.error('Unhandled error', { 
+        error: error.message, 
+        stack: error.stack,
+        url: req.url,
+        method: req.method 
+    });
+    
+    res.status(500).json({ 
+        success: false, 
+        error: 'Internal server error' 
+    });
+});
+
+// --- Inicialización del Servidor ---
+app.listen(port, ipAddress, () => {
+    logger.info('WhatsApp Automator Server started', {
+        port,
+        ipAddress,
+        nodeEnv: config.nodeEnv,
+        maxSessions: config.sessions.maxSessions
+    });
+});
+
+// --- Graceful Shutdown ---
+process.on('SIGTERM', async () => {
+    logger.info('SIGTERM received, shutting down gracefully');
+    
+    // Cerrar todas las sesiones
+    const sessions = Array.from(sessionManager.sessions.keys());
+    for (const userId of sessions) {
+        try {
+            await sessionManager.destroySession(userId);
+        } catch (error) {
+            logger.error('Error destroying session during shutdown', { userId, error: error.message });
+        }
+    }
+    
+    process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+    logger.info('SIGINT received, shutting down gracefully');
+    process.exit(0);
+});
+
+// Manejo de errores no capturados
+process.on('uncaughtException', (error) => {
+    logger.error('Uncaught Exception', { error: error.message, stack: error.stack });
+    process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    logger.error('Unhandled Rejection', { reason: reason?.message || reason, promise });
+});

@@ -1,0 +1,34 @@
+﻿
+sessionManager.js:168 Estado de sesión: 
+Object
+sessionManager.js:156 Verificando estado de sesión para userId: user_e8oxlx4aa5e_meblvjfn
+sessionManager.js:168 Estado de sesión: 
+Object
+sessionManager.js:156 Verificando estado de sesión para userId: user_e8oxlx4aa5e_meblvjfn
+sessionManager.js:168 Estado de sesión: 
+Object
+sessionManager.js:156 Verificando estado de sesión para userId: user_e8oxlx4aa5e_meblvjfn
+sessionManager.js:168 Estado de sesión: 
+Object
+sessionManager.js:156 Verificando estado de sesión para userId: user_e8oxlx4aa5e_meblvjfn
+sessionManager.js:168 Estado de sesión: 
+Object
+sessionManager.js:156 Verificando estado de sesión para userId: user_e8oxlx4aa5e_meblvjfn
+sessionManager.js:168 Estado de sesión: 
+Object
+sessionManager.js:156 Verificando estado de sesión para userId: user_e8oxlx4aa5e_meblvjfn
+sessionManager.js:168 Estado de sesión: 
+Object
+sessionManager.js:156 Verificando estado de sesión para userId: user_e8oxlx4aa5e_meblvjfn
+sessionManager.js:168 Estado de sesión: 
+Object
+sessionManager.js:156 Verificando estado de sesión para userId: user_e8oxlx4aa5e_meblvjfn
+sessionManager.js:168 Estado de sesión: 
+Object
+sessionManager.js:156 Verificando estado de sesión para userId: user_e8oxlx4aa5e_meblvjfn
+sessionManager.js:168 Estado de sesión: 
+Object
+sessionManager.js:156 Verificando estado de sesión para userId: user_e8oxlx4aa5e_meblvjfn
+sessionManager.js:168 Estado de sesión: 
+Object
+sessionManager.js:156 Verificando estado de sesión para userId: user_e8oxlx4aa5e_meblvjfn
