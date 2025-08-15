@@ -97,3 +97,8 @@ window.appConfig = {
   setStoredConfig
 };
 
+// Exportar funciones globalmente para uso directo
+window.getServerUrl = getServerUrl;
+window.getStoredConfig = getStoredConfig;
+window.setStoredConfig = setStoredConfig;
+

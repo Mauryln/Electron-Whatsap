@@ -7,10 +7,17 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
-    "build": "electron-builder",
-    "build:win": "electron-builder --win",
-    "build:mac": "electron-builder --mac",
-    "build:linux": "electron-builder --linux",
+    "build": "electron-builder --config electron-builder-config.js",
+    "build:win": "electron-builder --win --config electron-builder-config.js",
+    "build:mac": "electron-builder --mac --config electron-builder-config.js",
+    "build:linux": "electron-builder --linux --config electron-builder-config.js",
+    "build:clean": "node build.js",
+    "build:safe": "node build-safe.js",
+    "build:improved": "node build-improved.js",
+    "build:simple": "node build-simple.js",
+    "build:installer": "node build-installer.js",
+    "test-build": "node test-build.js",
+    "verify-build": "node verify-build.js",
     "postinstall": "electron-builder install-app-deps",
     "test-server": "node test-server.js"
   },
@@ -39,39 +46,6 @@
     "node-cron": "^3.0.3",
     "dotenv": "^16.3.1",
     "electron-store": "^8.1.0"
-  },
-  "build": {
-    "appId": "com.bimcat.whatsapp",
-    "productName": "WhatsApp Bimcat",
-    "directories": {
-      "output": "dist"
-    },
-    "files": [
-      "main.js",
-      "preload.js",
-      "renderer/**/*",
-      "server/**/*",
-      "assets/**/*",
-      "node_modules/**/*"
-    ],
-    "extraResources": [
-      {
-        "from": "assets",
-        "to": "assets"
-      }
-    ],
-    "win": {
-      "target": "nsis",
-      "icon": "assets/icon.ico"
-    },
-    "mac": {
-      "target": "dmg",
-      "icon": "assets/icon.icns"
-    },
-    "linux": {
-      "target": "AppImage",
-      "icon": "assets/icon.png"
-    }
   },
   "engines": {
     "node": ">=18.0.0"

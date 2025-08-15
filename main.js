@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain, dialog, Menu, shell } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const isDev = process.argv.includes('--dev');
 const Store = require('electron-store');
 
@@ -160,12 +161,10 @@ function startServer() {
   try {
     console.log('🚀 Iniciando servidor desde Electron...');
     
-    // Usar un enfoque más robusto para iniciar el servidor
     const { spawn } = require('child_process');
     const path = require('path');
     
-    // Crear un proceso separado para el servidor
-    const serverProcess = spawn('node', ['server/index.js'], {
+    const serverProcess = spawn('node', [path.join(__dirname, 'server', 'index.js')], {
       cwd: __dirname,
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: false
@@ -173,7 +172,6 @@ function startServer() {
     
     console.log('📡 Proceso del servidor iniciado con PID:', serverProcess.pid);
     
-    // Capturar logs del servidor
     serverProcess.stdout.on('data', (data) => {
       console.log('📤 Servidor stdout:', data.toString().trim());
     });
@@ -182,7 +180,6 @@ function startServer() {
       console.log('⚠️  Servidor stderr:', data.toString().trim());
     });
     
-    // Manejar el cierre del proceso del servidor
     serverProcess.on('close', (code) => {
       console.log('🔴 Proceso del servidor cerrado con código:', code);
     });
@@ -192,93 +189,93 @@ function startServer() {
       dialog.showErrorBox('Error del Servidor', 'Error al iniciar el proceso del servidor: ' + error.message);
     });
     
-    // Esperar a que el servidor se inicialice
-    setTimeout(() => {
-      console.log('🔍 Verificando que el servidor esté listo...');
-      
-             // Verificar que el servidor esté funcionando
-       const http = require('http');
-       const req = http.request({
-         hostname: '127.0.0.1', // Usar 127.0.0.1 para conexión explícita
-         port: SERVER_PORT,
-         path: '/health',
-         method: 'GET',
-         timeout: 10000
-       }, (res) => {
-        let data = '';
-        res.on('data', (chunk) => data += chunk);
-        res.on('end', () => {
-          try {
-            const response = JSON.parse(data);
-            console.log('✅ Servidor está funcionando correctamente');
-            console.log('   Status:', response.status);
-            console.log('   Uptime:', response.uptime, 'segundos');
-            
-            // Notificar al renderer que el servidor está listo
-            if (mainWindow) {
-              mainWindow.webContents.send('server-ready', { port: SERVER_PORT, url: SERVER_URL });
-            }
-          } catch (error) {
-            console.error('❌ Error al parsear respuesta del servidor:', error);
-            dialog.showErrorBox('Error del Servidor', 'El servidor respondió pero con un formato inesperado');
-          }
-        });
-      });
-      
-      req.on('error', (error) => {
-        console.error('❌ Error al verificar servidor:', error.message);
-        
-                 // Intentar una vez más después de un delay
-         setTimeout(() => {
-           console.log('🔄 Reintentando conexión al servidor...');
-           const retryReq = http.request({
-             hostname: '127.0.0.1', // Usar 127.0.0.1 para conexión explícita
-             port: SERVER_PORT,
-             path: '/health',
-             method: 'GET',
-             timeout: 5000
-           }, (res) => {
-            if (res.statusCode === 200) {
-              console.log('✅ Servidor conectado en el segundo intento');
-              if (mainWindow) {
-                mainWindow.webContents.send('server-ready', { port: SERVER_PORT, url: SERVER_URL });
-              }
-            }
-          });
-          
-          retryReq.on('error', (retryError) => {
-            console.error('❌ Error en el segundo intento:', retryError.message);
-            dialog.showErrorBox('Error del Servidor', 'No se pudo conectar al servidor después de múltiples intentos. Por favor, reinicia la aplicación.');
-          });
-          
-          retryReq.end();
-        }, 3000);
-      });
-      
-      req.on('timeout', () => {
-        console.error('❌ Timeout al verificar servidor');
-        req.destroy();
-        dialog.showErrorBox('Error del Servidor', 'Timeout al verificar el servidor. El servidor puede no estar funcionando correctamente.');
-      });
-      
-      req.end();
-      
-    }, 5000); // Esperar 5 segundos para que el servidor se inicialice
-    
-    // Guardar referencia al proceso para poder cerrarlo más tarde
     global.serverProcess = serverProcess;
+
+    setTimeout(() => {
+      verifyServer();
+    }, 5000);
     
   } catch (error) {
     console.error('❌ Error general al iniciar el servidor:', error);
     dialog.showErrorBox('Error del Servidor', 'Error general al iniciar el servidor: ' + error.message);
   }
 }
+    
+function verifyServer() {
+  console.log('🔍 Verificando que el servidor esté listo...');
+  
+  // Verificar que el servidor esté funcionando
+  const http = require('http');
+  const req = http.request({
+    hostname: '127.0.0.1',
+    port: SERVER_PORT,
+    path: '/health',
+    method: 'GET',
+    timeout: 10000
+  }, (res) => {
+    let data = '';
+    res.on('data', (chunk) => data += chunk);
+    res.on('end', () => {
+      try {
+        const response = JSON.parse(data);
+        console.log('✅ Servidor está funcionando correctamente');
+        console.log('   Status:', response.status);
+        console.log('   Uptime:', response.uptime, 'segundos');
+        
+        // Notificar al renderer que el servidor está listo
+        if (mainWindow) {
+          mainWindow.webContents.send('server-ready', { port: SERVER_PORT, url: SERVER_URL });
+        }
+      } catch (error) {
+        console.error('❌ Error al parsear respuesta del servidor:', error);
+        dialog.showErrorBox('Error del Servidor', 'El servidor respondió pero con un formato inesperado');
+      }
+    });
+  });
+  
+  req.on('error', (error) => {
+    console.error('❌ Error al verificar servidor:', error.message);
+    
+    // Intentar una vez más después de un delay
+    setTimeout(() => {
+      console.log('🔄 Reintentando conexión al servidor...');
+      const retryReq = http.request({
+        hostname: '127.0.0.1',
+        port: SERVER_PORT,
+        path: '/health',
+        method: 'GET',
+        timeout: 5000
+      }, (res) => {
+        if (res.statusCode === 200) {
+          console.log('✅ Servidor conectado en el segundo intento');
+          if (mainWindow) {
+            mainWindow.webContents.send('server-ready', { port: SERVER_PORT, url: SERVER_URL });
+          }
+        }
+      });
+      
+      retryReq.on('error', (retryError) => {
+        console.error('❌ Error en el segundo intento:', retryError.message);
+        dialog.showErrorBox('Error del Servidor', 'No se pudo conectar al servidor después de múltiples intentos. Por favor, reinicia la aplicación.');
+      });
+      
+      retryReq.end();
+    }, 3000);
+  });
+  
+  req.on('timeout', () => {
+    console.error('❌ Timeout al verificar servidor');
+    req.destroy();
+    dialog.showErrorBox('Error del Servidor', 'Timeout al verificar el servidor. El servidor puede no estar funcionando correctamente.');
+  });
+  
+  req.end();
+}
 
 // Eventos de la aplicación
 app.whenReady().then(createWindow);
 
 app.on('window-all-closed', () => {
-  // Cerrar el proceso del servidor si existe
   if (global.serverProcess) {
     console.log('🔄 Cerrando proceso del servidor...');
     global.serverProcess.kill('SIGTERM');
@@ -308,6 +305,29 @@ ipcMain.handle('select-file', async (event, options) => {
 ipcMain.handle('save-file', async (event, options) => {
   const result = await dialog.showSaveDialog(mainWindow, options);
   return result;
+});
+
+ipcMain.handle('save-text-file', async (event, { content, defaultPath }) => {
+  try {
+    const result = await dialog.showSaveDialog(mainWindow, {
+      defaultPath: defaultPath,
+      filters: [
+        { name: 'Archivos de texto', extensions: ['txt'] },
+        { name: 'Todos los archivos', extensions: ['*'] }
+      ]
+    });
+    
+    if (!result.canceled && result.filePath) {
+      const fs = require('fs');
+      await fs.promises.writeFile(result.filePath, content, 'utf8');
+      return { success: true, filePath: result.filePath };
+    } else {
+      return { success: false, canceled: true };
+    }
+  } catch (error) {
+    console.error('Error al guardar archivo:', error);
+    return { success: false, error: error.message };
+  }
 });
 
 ipcMain.handle('show-message', async (event, options) => {

@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Archivos
   selectFile: (options) => ipcRenderer.invoke('select-file', options),
   saveFile: (options) => ipcRenderer.invoke('save-file', options),
+  saveTextFile: (content, defaultPath) => ipcRenderer.invoke('save-text-file', { content, defaultPath }),
   
   // Diálogos
   showMessage: (options) => ipcRenderer.invoke('show-message', options),
