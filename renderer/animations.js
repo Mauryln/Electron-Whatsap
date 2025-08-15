@@ -30,6 +30,11 @@ document.addEventListener("DOMContentLoaded", () => {
       // Update selected numbers dropdown when switching to message tab
       if (tab.dataset.tab === "message") {
         updateSelectedNumbersDropdown()
+        // Attempt to focus the Trix editor to force a re-render/re-layout
+        const trixEditor = document.querySelector('trix-editor');
+        if (trixEditor) {
+          trixEditor.focus();
+        }
       }
     })
   })

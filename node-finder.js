@@ -54,7 +54,7 @@ function runWithNode(scriptPath, options = {}) {
     throw new Error(`Script not found: ${scriptPath}`);
   }
 
-  return spawn(nodeExecutable, [scriptPath], {
+    return spawn(nodeExecutable, [scriptPath], {
     cwd: path.dirname(scriptPath), // Set working directory to the script's location
     stdio: ['pipe', 'pipe', 'pipe'],
     detached: false,
@@ -63,9 +63,7 @@ function runWithNode(scriptPath, options = {}) {
       ELECTRON_IS_DEV: '0',
       NODE_ENV: 'production'
     },
-    ...options
   });
-}
 
 module.exports = {
   findNodeExecutable,

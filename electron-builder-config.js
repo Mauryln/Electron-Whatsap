@@ -9,6 +9,7 @@ module.exports = {
   },
   asar: true, // ✅ Fuerza a crear app.asar
   asarUnpack: [
+    "**/node_modules/puppeteer/**",
     // Solo dejar fuera módulos nativos pesados si existen
     "node_modules/{sharp,sqlite3}/**"
   ],
@@ -20,18 +21,13 @@ module.exports = {
     "server-inline.js",
     "renderer/**/*",
     "server/**/*",
-    "assets/**/*",
-    "bin/**/*"
+    "assets/**/*"
     // node_modules se incluye automáticamente
   ],
   extraResources: [
     {
       from: "assets",
       to: "assets"
-    },
-    {
-      from: "bin",
-      to: "bin"
     }
   ],
   win: {
@@ -73,6 +69,21 @@ module.exports = {
     if (fs.existsSync(resourcesPath)) {
       const files = fs.readdirSync(resourcesPath);
       console.log(`✅ resources: ${files.length} archivos/directorios`);
+    }
+
+    // --- COPIAR NODE.EXE MANUALMENTE ---
+    const sourceNodePath = path.join(process.cwd(), 'bin', process.platform === 'win32' ? 'node.exe' : 'node');
+    const destNodeDir = path.join(context.appOutDir, 'resources', 'bin');
+    const destNodePath = path.join(destNodeDir, process.platform === 'win32' ? 'node.exe' : 'node');
+
+    if (fs.existsSync(sourceNodePath)) {
+      if (!fs.existsSync(destNodeDir)) {
+        fs.mkdirSync(destNodeDir, { recursive: true });
+      }
+      fs.copyFileSync(sourceNodePath, destNodePath);
+      console.log(`✅ node.exe copiado a: ${destNodePath}`);
+    } else {
+      console.warn(`⚠️  node.exe no encontrado en: ${sourceNodePath}. No se pudo copiar.`);
     }
   }
 };
